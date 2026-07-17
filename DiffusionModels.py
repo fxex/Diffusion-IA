@@ -44,173 +44,173 @@ def q_sample(x0, t, noise):
 
     return sqrt_alpha_bar * x0 + sqrt_one_minus_alpha_bar * noise
 
-# ======================
-# MODEL
-# ======================
 def residual_block(x, t_embed, filters):
     residual = x
 
     # Primera convolución
     x = layers.Conv2D(
         filters,
-        3,
-        padding="same"
+        kernel_size=3,
+        padding="same",
+        use_bias=False
     )(x)
 
-    x = layers.GroupNormalization(groups=8)(x)
+    x = layers.GroupNormalization(
+        groups=4
+    )(x)
+
     x = layers.Activation("swish")(x)
 
-    # Incorporar información temporal
-    t = layers.Dense(filters, activation="swish")(t_embed)
-    t = layers.Reshape((1, 1, filters))(t)
+    # Adaptar el embedding temporal
+    t = layers.Dense(
+        filters,
+        activation="swish"
+    )(t_embed)
 
+    t = layers.Reshape(
+        (1, 1, filters)
+    )(t)
+
+    # Incorporar el timestep
     x = layers.Add()([x, t])
 
     # Segunda convolución
     x = layers.Conv2D(
         filters,
-        3,
-        padding="same"
+        kernel_size=3,
+        padding="same",
+        use_bias=False
     )(x)
 
-    x = layers.GroupNormalization(groups=8)(x)
+    x = layers.GroupNormalization(
+        groups=4
+    )(x)
+
     x = layers.Activation("swish")(x)
 
-    # Ajustar canales si es necesario
+    # Si cambia la cantidad de canales,
+    # adaptar la conexión residual
     if residual.shape[-1] != filters:
         residual = layers.Conv2D(
             filters,
-            1,
+            kernel_size=1,
             padding="same"
         )(residual)
 
     return layers.Add()([x, residual])
 
+
 def build_model():
-    inputs = layers.Input(
+    # =========================
+    # ENTRADAS
+    # =========================
+    image_input = layers.Input(
         shape=(28, 28, 1),
         name="noisy_image"
     )
 
-    t_input = layers.Input(
+    time_input = layers.Input(
         shape=(),
         dtype=tf.int32,
         name="timestep"
     )
 
-    # ==========================
+    # =========================
     # EMBEDDING TEMPORAL
-    # ==========================
+    # =========================
     t_embed = layers.Embedding(
         input_dim=T,
-        output_dim=64
-    )(t_input)
+        output_dim=32
+    )(time_input)
 
     t_embed = layers.Dense(
-        128,
+        64,
         activation="swish"
     )(t_embed)
 
-    t_embed = layers.Dense(
-        128,
-        activation="swish"
-    )(t_embed)
+    # =========================
+    # ENTRADA DE LA IMAGEN
+    # =========================
+    x = layers.Conv2D(
+        16,
+        kernel_size=3,
+        padding="same"
+    )(image_input)
 
-    # ==========================
-    # ENTRADA
-    # ==========================
+    # Forma: 28x28x16
+
+    # =========================
+    # ENCODER
+    # =========================
+    skip1 = residual_block(
+        x,
+        t_embed,
+        filters=16
+    )
+
+    # Forma: 28x28x16
+
     x = layers.Conv2D(
         32,
-        3,
+        kernel_size=3,
+        strides=2,
         padding="same"
-    )(inputs)
+    )(skip1)
 
-    # ==========================
-    # ENCODER
-    # ==========================
-    skip1 = residual_block(
+    # Forma: 14x14x32
+
+    skip2 = residual_block(
         x,
         t_embed,
         filters=32
     )
 
+    # Forma: 14x14x32
+
     x = layers.Conv2D(
         64,
-        3,
+        kernel_size=3,
         strides=2,
         padding="same"
-    )(skip1)
-    # 28x28 -> 14x14
+    )(skip2)
 
-    skip2 = residual_block(
+    # Forma: 7x7x64
+
+    # =========================
+    # CUELLO DE BOTELLA
+    # =========================
+    x = residual_block(
         x,
         t_embed,
         filters=64
     )
 
-    x = layers.Conv2D(
-        128,
-        3,
-        strides=2,
-        padding="same"
-    )(skip2)
-    # 14x14 -> 7x7
+    # Forma: 7x7x64
 
-    # ==========================
-    # CUELLO DE BOTELLA
-    # ==========================
-    x = residual_block(
-        x,
-        t_embed,
-        filters=128
-    )
-
-    x = residual_block(
-        x,
-        t_embed,
-        filters=128
-    )
-
-    # ==========================
+    # =========================
     # DECODER
-    # ==========================
+    # =========================
     x = layers.UpSampling2D(
         size=2,
         interpolation="nearest"
     )(x)
 
+    # Forma: 14x14x64
+
     x = layers.Conv2D(
-        64,
-        3,
+        32,
+        kernel_size=3,
         padding="same"
     )(x)
+
+    # Forma: 14x14x32
 
     x = layers.Concatenate()([
         x,
         skip2
     ])
 
-    x = residual_block(
-        x,
-        t_embed,
-        filters=64
-    )
-
-    x = layers.UpSampling2D(
-        size=2,
-        interpolation="nearest"
-    )(x)
-
-    x = layers.Conv2D(
-        32,
-        3,
-        padding="same"
-    )(x)
-
-    x = layers.Concatenate()([
-        x,
-        skip1
-    ])
+    # Forma: 14x14x64
 
     x = residual_block(
         x,
@@ -218,29 +218,117 @@ def build_model():
         filters=32
     )
 
-    # ==========================
-    # SALIDA: RUIDO PREDICHO
-    # ==========================
+    # Forma: 14x14x32
+
+    x = layers.UpSampling2D(
+        size=2,
+        interpolation="nearest"
+    )(x)
+
+    # Forma: 28x28x32
+
+    x = layers.Conv2D(
+        16,
+        kernel_size=3,
+        padding="same"
+    )(x)
+
+    # Forma: 28x28x16
+
+    x = layers.Concatenate()([
+        x,
+        skip1
+    ])
+
+    # Forma: 28x28x32
+
+    x = residual_block(
+        x,
+        t_embed,
+        filters=16
+    )
+
+    # Forma: 28x28x16
+
+    # =========================
+    # SALIDA
+    # =========================
     x = layers.GroupNormalization(
-        groups=8
+        groups=4
     )(x)
 
     x = layers.Activation("swish")(x)
 
-    outputs = layers.Conv2D(
+    output = layers.Conv2D(
         1,
-        3,
+        kernel_size=3,
         padding="same",
         kernel_initializer="zeros"
     )(x)
 
+    # Forma: 28x28x1
+    # Representa el ruido predicho
+
     return tf.keras.Model(
-        inputs=[inputs, t_input],
-        outputs=outputs
+        inputs=[image_input, time_input],
+        outputs=output,
+        name="SmallDiffusionUNet"
     )
 
 model = build_model()
 optimizer = tf.keras.optimizers.Adam(1e-4)
+
+def sample_batch(
+    model,
+    initial_noise,
+    reverse_noises
+):
+
+    x = tf.identity(initial_noise)
+
+    for t in reversed(range(T)):
+        t_tensor = tf.fill(
+            [tf.shape(x)[0]],
+            t
+        )
+
+        noise_pred = model(
+            [x, t_tensor],
+            training=False
+        )
+
+        beta_t = betas[t]
+        alpha_t = alphas[t]
+        alpha_bar_t = alpha_bar[t]
+
+        # Media del proceso inverso:
+        # estimación de x_(t-1)
+        x = (
+            1.0 / tf.sqrt(alpha_t)
+        ) * (
+            x
+            - (
+                beta_t
+                / tf.sqrt(1.0 - alpha_bar_t)
+            ) * noise_pred
+        )
+
+        if t > 0:
+            alpha_bar_previous = alpha_bar[t - 1]
+
+            posterior_variance = (
+                beta_t
+                * (1.0 - alpha_bar_previous)
+                / (1.0 - alpha_bar_t)
+            )
+
+            # Se usa el ruido fijo correspondiente a este paso.
+            x += (
+                tf.sqrt(posterior_variance)
+                * reverse_noises[t]
+            )
+
+    return x
 
 # =========================
 # GUARDAR IMÁGENES
@@ -436,58 +524,6 @@ history = train(
     epochs=100,
     n_samples=25
 )
-
-def sample_batch(
-    model,
-    initial_noise,
-    reverse_noises
-):
-
-    x = tf.identity(initial_noise)
-
-    for t in reversed(range(T)):
-        t_tensor = tf.fill(
-            [tf.shape(x)[0]],
-            t
-        )
-
-        noise_pred = model(
-            [x, t_tensor],
-            training=False
-        )
-
-        beta_t = betas[t]
-        alpha_t = alphas[t]
-        alpha_bar_t = alpha_bar[t]
-
-        # Media del proceso inverso:
-        # estimación de x_(t-1)
-        x = (
-            1.0 / tf.sqrt(alpha_t)
-        ) * (
-            x
-            - (
-                beta_t
-                / tf.sqrt(1.0 - alpha_bar_t)
-            ) * noise_pred
-        )
-
-        if t > 0:
-            alpha_bar_previous = alpha_bar[t - 1]
-
-            posterior_variance = (
-                beta_t
-                * (1.0 - alpha_bar_previous)
-                / (1.0 - alpha_bar_t)
-            )
-
-            # Se usa el ruido fijo correspondiente a este paso.
-            x += (
-                tf.sqrt(posterior_variance)
-                * reverse_noises[t]
-            )
-
-    return x
 
 # =========================
 # GRÁFICO DE PÉRDIDA
