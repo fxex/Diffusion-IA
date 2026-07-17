@@ -3,13 +3,14 @@
 ## Arquitectura del Modelo (U-Net con Conexiones Skip)
 
 ```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': { 'fontSize': '14px' }}}%%
 graph LR
-    subgraph Inputs
+    subgraph Inputs["Entradas"]
         I1["Imagen ruidosa\nx_t\n(28, 28, 1)"]
         I2["Timestep\nt\n(scalar)"]
     end
 
-    subgraph TimestepEmbedding["Timestep Embedding"]
+    subgraph TimestepEmb["Timestep Embedding"]
         E1["Embedding(200→32)"]
         E2["Dense(32→64, Swish)"]
         I2 --> E1 --> E2
@@ -25,7 +26,7 @@ graph LR
         I1 --> C0 --> RB1 --> DS1 --> RB2 --> DS2
     end
 
-    subgraph Bottleneck
+    subgraph Bottleneck["Bottleneck"]
         RB3["ResidualBlock(64)\n+ Timestep Inject\n(7, 7, 64)"]
         DS2 --> RB3
     end
@@ -41,15 +42,15 @@ graph LR
         RB3 --> UP1 --> CAT1 --> RB4 --> UP2 --> CAT2 --> RB5
     end
 
-    subgraph SkipConnections["Conexiones Skip"]
-        RB1 -.->|"skip1\n(28, 28, 16)"| CAT2
-        RB2 -.->|"skip2\n(14, 14, 32)"| CAT1
+    subgraph SkipConns["Conexiones Skip"]
+        RB1 -.->|"skip1 (28, 28, 16)"| CAT2
+        RB2 -.->|"skip2 (14, 14, 32)"| CAT1
     end
 
     subgraph OutputHead["Salida"]
         GN["GroupNorm(4)"]
         SW["Swish Activation"]
-        CO["Conv2D(1, 3×3, same)\nkernel_initializer=zeros\n(28, 28, 1)"]
+        CO["Conv2D(1, 3×3, same)\nkernel= zeros\n(28, 28, 1)"]
         O1["Ruido predicho\nε_θ(x_t, t)\n(28, 28, 1)"]
 
         RB5 --> GN --> SW --> CO --> O1
@@ -60,19 +61,12 @@ graph LR
     E2 -->|"+ (adición)"| RB3
     E2 -->|"+ (adición)"| RB4
     E2 -->|"+ (adición)"| RB5
-
-    style Inputs fill:#e1f5fe,stroke:#01579b
-    style TimestepEmbedding fill:#fff3e0,stroke:#e65100
-    style Encoder fill:#e8f5e9,stroke:#1b5e20
-    style Bottleneck fill:#fce4ec,stroke:#880e4f
-    style Decoder fill:#f3e5f5,stroke:#4a148c
-    style SkipConnections fill:#fffde7,stroke:#f57f17,stroke-dasharray:5,5
-    style OutputHead fill:#e0f2f1,stroke:#004d40
 ```
 
 ### Detalle de un ResidualBlock
 
 ```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': { 'fontSize': '14px' }}}%%
 graph LR
     X["Entrada\nx (C_in)"]
     T["Timestep\nEmbedding (64)"]
@@ -92,19 +86,16 @@ graph LR
     end
 
     subgraph Branch2["Rama Residual"]
-        COND
-        CV1["Conv2D(C_out, 1×1)\nsolo si C_in ≠ C_out"]
+        COND{{"¿C_in ≠ C_out?"}}
+        CV1["Conv2D(C_out, 1×1)"]
     end
 
     X --> COND
-    COND -->|"C_in = C_out"| AD2["Add"]
-    COND -->|"C_in ≠ C_out"| CV1 --> AD2
+    COND -->|"No (skip directo)"| AD2["Add"]
+    COND -->|"Sí (proyección)"| CV1 --> AD2
 
     S2 --> AD2
     AD2 --> Y["Salida\n(C_out)"]
-
-    style Branch1 fill:#e8f5e9,stroke:#1b5e20
-    style Branch2 fill:#fff3e0,stroke:#e65100
 ```
 
 ---
@@ -112,6 +103,7 @@ graph LR
 ## Flujo de Entrenamiento
 
 ```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': { 'fontSize': '14px' }}}%%
 flowchart TD
     A["Dataset: Fashion-MNIST\n(60000, 28, 28, 1)\nNormalizado a [-1, 1]"] --> B["Batch size = 128\nShuffle buffer = 60000"]
 
@@ -140,13 +132,6 @@ flowchart TD
     M -->|"Sí"| B
     M -->|"No"| N["plot_training_history\nGuardar loss curve\n→ diffusion_loss.png"]
     N --> O["Fin del entrenamiento"]
-
-    style A fill:#e1f5fe,stroke:#01579b
-    style E fill:#fff3e0,stroke:#e65100
-    style F fill:#e8f5e9,stroke:#1b5e20
-    style G fill:#fce4ec,stroke:#880e4f
-    style K fill:#f3e5f5,stroke:#4a148c
-    style O fill:#e0f2f1,stroke:#004d40
 ```
 
 ---
@@ -154,6 +139,7 @@ flowchart TD
 ## Flujo de Muestreo (Inferencia / Reverse Process)
 
 ```mermaid
+%%{init: {'theme': 'dark', 'themeVariables': { 'fontSize': '14px' }}}%%
 flowchart TD
     A["z_T ~ N(0, I)\nRuido puro inicial\n(n_samples, 28, 28, 1)"] --> B["t = T-1 = 199"]
 
@@ -174,12 +160,6 @@ flowchart TD
     H --> J["Clip a [-1, 1]\nRescalar a [0, 1]"]
 
     J --> K["Guardar imagen generada\n(28, 28, 1)"]
-
-    style A fill:#fce4ec,stroke:#880e4f
-    style D fill:#e8f5e9,stroke:#1b5e20
-    style E fill:#fff3e0,stroke:#e65100
-    style H fill:#e1f5fe,stroke:#01579b
-    style K fill:#e0f2f1,stroke:#004d40
 ```
 
 ---
